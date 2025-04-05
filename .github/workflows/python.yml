@@ -29,7 +29,9 @@ jobs:
       - name: Test
         run: |
           docker run -v $GITHUB_WORKSPACE:/fisheye --rm ghcr.io/mrjoe3012/fisheye-python:latest \
-          /bin/sh -c ". /venv/bin/activate && pip install -e /fisheye/fisheye_python &&
+          /bin/sh -c ". /venv/bin/activate &&
+          pip install -e /fisheye/fisheye_python &&
+          pip install -r /fisheye/fisheye_python/dev_requirements.txt &&
           pylint /fisheye/fisheye_python &&
           mypy /fisheye/fisheye_python &&
           pytest /fisheye/fisheye_python/tests"
