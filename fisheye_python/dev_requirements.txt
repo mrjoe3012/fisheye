@@ -1,2 +1,4 @@
 mypy~=1.15.0
 pylint~=3.3.6
+types_setuptools~=78.1.0.20250329
+setuptools~=78.1.0
