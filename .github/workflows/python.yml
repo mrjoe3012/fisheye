@@ -18,8 +18,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
-        run: |
-          export DOCKER_RUN="docker run -v $GITHUB_WORKSPACE:/fisheye --rm ghcr.io/mrjoe3012/fisheye-python:latest"
 
       - name: Docker login
         uses: docker/login-action@v2
@@ -30,6 +28,7 @@ jobs:
 
       - name: Install
         run: |
+          export DOCKER_RUN="docker run -v $GITHUB_WORKSPACE:/fisheye --rm ghcr.io/mrjoe3012/fisheye-python:latest"
           $DOCKER_RUN /bin/sh -c ". /venv/bin/activate && pip install -e /fisheye/fisheye_python"
 
       - name: Pylint
