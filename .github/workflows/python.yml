@@ -28,7 +28,7 @@ jobs:
 
       - name: Install
         run: |
-          echo "DOCKER_RUN=\"docker run -v $GITHUB_WORKSPACE:/fisheye --rm ghcr.io/mrjoe3012/fisheye-python:latest\" >> $GITHUB_ENV &&
+          echo "DOCKER_RUN=\"docker run -v $GITHUB_WORKSPACE:/fisheye --rm ghcr.io/mrjoe3012/fisheye-python:latest\"" >> $GITHUB_ENV &&
           $DOCKER_RUN /bin/sh -c ". /venv/bin/activate && pip install -e /fisheye/fisheye_python"
 
       - name: Pylint
