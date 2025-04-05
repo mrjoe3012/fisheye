@@ -1,0 +1,38 @@
+name: Run Python Linting
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    
+    services:
+      docker:
+        image: ghcr.io/mrjoe3012/fisheye-python:latest
+        options: --privileged
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      # - name: Pull image
+      #   run: |
+      #     docker pull ghcr.io/mrjoe3012/fisheye-python:latest
+
+      - name: Pylint
+        run: |
+          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c "pylint /github/workspace/fisheye_python/"
+
+      - name: MyPy
+        run: |
+          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c "mypy /github/workspace/fisheye_python/"
+
+      - name: Pytest
+        run: |
+          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c "pytest /github/workspace/fisheye_python/tests"
