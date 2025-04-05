@@ -12,6 +12,9 @@ jobs:
   check:
     runs-on: ubuntu-latest
 
+    env:
+      DOCKER_RUN: "docker run -v $GITHUB_WORKSPACE:/fisheye --rm ghcr.io/mrjoe3012/fisheye-python:latest"
+
     permissions:
       packages: read 
 
@@ -28,16 +31,16 @@ jobs:
 
       - name: Install
         run: |
-          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c ". /venv/bin/activate && cd $GITHUB_WORKSPACE && pip install -e ./fisheye_python"
+          $DOCKER_RUN /bin/sh -c ". /venv/bin/activate && cd $GITHUB_WORKSPACE && pip install -e ./fisheye_python"
 
       - name: Pylint
         run: |
-          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c ". /venv/bin/activate && pylint /github/workspace/fisheye_python/"
+          $DOCKER_RUN /bin/sh -c ". /venv/bin/activate && pylint /github/workspace/fisheye_python/"
 
       - name: MyPy
         run: |
-          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c ". /venv/bin/activate && mypy /github/workspace/fisheye_python/"
+          $DOCKER_RUN /bin/sh -c ". /venv/bin/activate && mypy /github/workspace/fisheye_python/"
 
       - name: Pytest
         run: |
-          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c ". /venv/bin/activate && pytest /github/workspace/fisheye_python/tests"
+          $DOCKER_RUN /bin/sh -c ". /venv/bin/activate && pytest /github/workspace/fisheye_python/tests"
