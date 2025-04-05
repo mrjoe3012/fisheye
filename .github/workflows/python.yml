@@ -1,0 +1,37 @@
+name: Run Python Linting
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    permissions:
+      packages: read 
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Docker login
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Test
+        run: |
+          docker run -v $GITHUB_WORKSPACE:/fisheye --rm ghcr.io/mrjoe3012/fisheye-python:latest \
+          /bin/sh -c ". /venv/bin/activate &&
+          pip install -e /fisheye/fisheye_python &&
+          pip install -r /fisheye/fisheye_python/dev_requirements.txt &&
+          pylint /fisheye/fisheye_python &&
+          mypy /fisheye/fisheye_python &&
+          pytest /fisheye/fisheye_python/tests"
