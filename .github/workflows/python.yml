@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      DOCKER_RUN: "docker run -v $GITHUB_WORKSPACE:/fisheye --rm ghcr.io/mrjoe3012/fisheye-python:latest"
+      DOCKER_RUN: "docker run -v '$GITHUB_WORKSPACE':/fisheye --rm ghcr.io/mrjoe3012/fisheye-python:latest"
 
     permissions:
       packages: read 
