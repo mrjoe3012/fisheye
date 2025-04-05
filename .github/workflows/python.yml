@@ -9,13 +9,11 @@ on:
       - master
 
 jobs:
+  permissions:
+    packages: read 
+
   check:
     runs-on: ubuntu-latest
-    
-    # services:
-    #   docker:
-    #     image: ghcr.io/mrjoe3012/fisheye-python:latest
-    #     options: --privileged
 
     steps:
       - name: Checkout code
