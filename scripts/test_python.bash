@@ -11,6 +11,9 @@ argsparse_parse_options "$@"
 argsparse_report
 
 EXIT="0"
+PYLINT=""
+MYPY=""
+PYTEST=""
 
 if [[ "${program_options[all]}" ]]; then
     program_options[pylint]="1"
@@ -25,6 +28,7 @@ if [[ "${program_options[pylint]}" ]]; then
         EXIT="1"
     else
         pylint "${SRC_DIR}"
+        PYLINT="${?}"
     fi
 fi
 
@@ -35,6 +39,7 @@ if [[ "${program_options[mypy]}" ]]; then
         EXIT="1"
     else
         mypy "${SRC_DIR}"
+        MYPY="${?}"
     fi
 fi
 
@@ -45,7 +50,12 @@ if [[ "${program_options[pytest]}" ]]; then
         EXIT="1"
     else
         pytest "${SRC_DIR}/tests"
+        PYTEST="${?}"
     fi
 fi
+
+echo "mypy      Exit code: ${MYPY}"
+echo "pylint    Exit code: ${PYLINT}"
+echo "pytest    Exit code: ${PYTEST}"
 
 exit $EXIT
