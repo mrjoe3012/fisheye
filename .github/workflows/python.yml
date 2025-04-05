@@ -28,7 +28,7 @@ jobs:
 
       - name: Install
         run: |
-          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c ". /venv/bin/activate && pip install -e /github/workspace/fisheye_python/"
+          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c ". /venv/bin/activate && pip install -e $GITHUB_WORKSPACE/fisheye_python/"
 
       - name: Pylint
         run: |
