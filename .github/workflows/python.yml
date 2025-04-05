@@ -26,14 +26,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install
+        run: |
+          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c "/venv/bin/activate && pip install -e /github/workspace/fisheye_python/"
+
       - name: Pylint
         run: |
-          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c "pylint /github/workspace/fisheye_python/"
+          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c ". /venv/bin/activate && pylint /github/workspace/fisheye_python/"
 
       - name: MyPy
         run: |
-          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c "mypy /github/workspace/fisheye_python/"
+          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c ". /venv/bin/activate && mypy /github/workspace/fisheye_python/"
 
       - name: Pytest
         run: |
-          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c "pytest /github/workspace/fisheye_python/tests"
+          docker run --rm ghcr.io/mrjoe3012/fisheye-python:latest /bin/sh -c ". /venv/bin/activate && pytest /github/workspace/fisheye_python/tests"
