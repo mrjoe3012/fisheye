@@ -4,6 +4,12 @@ requirements in the install_requires list only if they are needed
 by end-users, place development requirements in 'dev_requirements.txt'.
 """
 from setuptools import setup
+import os
+
+if os.environ.get('DEBIAN_FRONTEND', '').lower() == 'noninteractive':
+    opencv_python = "opencv-python-headless~=4.11.0.86"
+else:
+    opencv_python = "opencv-python~=4.11.0.86"
 
 setup(
     name='fisheye',
@@ -16,6 +22,6 @@ setup(
     author_email='josephagrane@gmail.com',
     install_requires=[
         "numpy~=2.2.4",
-        "opencv-python~=4.11.0.86",
+        opencv_python,
     ]
 )
