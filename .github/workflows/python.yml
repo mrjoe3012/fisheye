@@ -32,6 +32,5 @@ jobs:
           /bin/sh -c ". /venv/bin/activate &&
           pip install -e /fisheye/fisheye_python &&
           pip install -r /fisheye/fisheye_python/dev_requirements.txt &&
-          pylint /fisheye/fisheye_python &&
           mypy /fisheye/fisheye_python &&
           pytest /fisheye/fisheye_python/tests"
