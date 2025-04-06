@@ -15,6 +15,7 @@ setup(
     author='Joseph Agrane',
     author_email='josephagrane@gmail.com',
     install_requires=[
-
+        "numpy~=2.2.4",
+        "opencv-python~=4.11.0.86",
     ]
 )
