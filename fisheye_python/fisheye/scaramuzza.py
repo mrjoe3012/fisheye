@@ -74,9 +74,11 @@ def partial_extrinsics(
     Given observations of the calibration pattern, returns a (partial)
     estimate of the homogenous transformation representing the camera's
     position and orientation relative to the checkerboard.
-    :param Observations of the calibration pattern (num_obs, N, 2)
-    :param pattern_rows: The number of inner rows in the calibration pattern.
-    :param pattern_cols: The number of inner columns in the calibration pattern.
+    :param Observations of the calibration pattern (num_obs, N, 2), should
+    be centred around the initial distortion centre (middle of the image).
+    :param pattern_world_coords: Array of shape (R*C, 3) where R is the number
+    of rows in the pattern and C is the number of columns in the pattern. The points
+    should be in row-major order.
     :returns: The num_obsx4x4 homogenous transformation matrix with the element corresponding
     to the translation in the z-dimension set to np.nan for each one.
     """
@@ -141,7 +143,19 @@ def linear_intrinsics_and_z_translation(pattern_observations: np.ndarray,
                                         pattern_world_coords: np.ndarray,
                                         extrinsics: np.ndarray) -> np.ndarray:
     """
-    TODO 
+    Solves a system of linear equations to simultaneously find the
+    z-translation and polynomial coefficients.
+    :param pattern_observations: The pattern coordinates in image
+    space centred around the initial centre of distortion (middle
+    of the image). Size should be (N, M, 2) where N is the number
+    of observations of the pattern and M is the total number of
+    corners in the calibration pattern stored in row-major order.
+    :param extrinsics: The (N, 4, 4) extrinsics transformation matrix
+    computed by partial_extrinsics() which has all z-translation
+    componens set to np.nan. This will be modified in-place such
+    that z-components are set to the linear estimate.
+    :returns: An array of 5 polynomial coefficients in descending
+    order of power. The second-to-lowest power is always 0.
     """
     assert check_pattern_observations_shape(pattern_observations)
     assert check_pattern_world_coords_shape(pattern_world_coords)
