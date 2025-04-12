@@ -1,0 +1,268 @@
+"""
+Numpy implementation of the calibration procedure described
+in "A Toolbox for Easily Calibrating Omnidirectional Cameras," by Scaramuzza et al.
+"""
+import logging
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+def check_pattern_observations_shape(pattern_observations: np.ndarray) -> bool:
+    """
+    :param pattern_observations: Observations of the calibration pattern in the
+    image space. The first dimension should be the number of patterns, the second
+    dimension is the number of rows * cols in the pattern and the last dimension
+    is 2 for the x-y coordinates of the pixels.
+    :returns: True if the shape is correct.
+    """
+    return len(pattern_observations.shape) == 3 and pattern_observations.shape[-1] == 2
+
+def check_pattern_world_coords_shape(pattern_world_coords: np.ndarray) -> bool:
+    """
+    :param pattern_world_coords: The coordinates of the calibration pattern
+    in 3D. Should be Nx3 where n is rows * cols and 3 is the 3d coordinates
+    (z is always zero).
+    :returns: True if the shape is correct.
+    """
+    return len(pattern_world_coords.shape) == 2 and pattern_world_coords.shape[-1] == 3
+
+def check_extrinsics_shape(extrinsics: np.ndarray) -> bool:
+    """
+    :param extrinsics: The array of extrinsics matrices. Each of these
+    should be a 4x4 homogenous 3d transformation. So the shape must be
+    Nx4x4 where N is the number of transformations.
+    :returns: True if the shape is correct.
+    """
+    return len(extrinsics.shape) == 3 and extrinsics.shape[1:] == (4, 4)
+
+def generate_pattern_world_coords(pattern_rows: int, pattern_cols: int,
+                                  pattern_square_size: float) -> np.ndarray:
+    """
+    Generate the Nx3 array of world coordinates for a pattern,
+    assuming the top-left corner is at (0,0,0)  and the pattern
+    lies on a place with z=0.
+    :param pattern_rows: Number of corners per column.
+    :param pattern_cols: Number of corners per row.
+    :param pattern_square_size: The size, in metres, of each square in the calibration
+    pattern (usually around 20-40mm).
+    :returns: N,3 array of coordinates in world space where
+    N = pattern_rows * pattern_cols. The coordinates are returned from
+    left to right and top to bottom in row-major order.
+    """
+    assert pattern_rows > 0 and pattern_cols > 0 and pattern_square_size > 0
+    # generate a grid of coordinates representing the pattern's 3d coordinates
+    world_coords = np.stack(
+        np.meshgrid(
+            np.arange(pattern_cols) * pattern_square_size,
+            np.arange(pattern_rows) * pattern_square_size,
+        ),
+        axis=-1
+    ).reshape(-1, 2)
+    world_coords = np.concatenate(
+        [
+            world_coords,
+            np.ones((world_coords.shape[0], 1))
+        ],
+        axis=-1
+    )
+    return world_coords
+
+def partial_extrinsics(
+        pattern_observations: np.ndarray,
+        pattern_world_coords: np.ndarray) -> np.ndarray:
+    """
+    Given observations of the calibration pattern, returns a (partial)
+    estimate of the homogenous transformation representing the camera's
+    position and orientation relative to the checkerboard.
+    :param Observations of the calibration pattern (num_obs, N, 2)
+    :param pattern_rows: The number of inner rows in the calibration pattern.
+    :param pattern_cols: The number of inner columns in the calibration pattern.
+    :returns: The num_obsx4x4 homogenous transformation matrix with the element corresponding
+    to the translation in the z-dimension set to np.nan for each one.
+    """
+    assert check_pattern_observations_shape(pattern_observations)
+    assert check_pattern_world_coords_shape(pattern_world_coords)
+    logger.debug(f"Computing partial extrinsics for {pattern_observations.shape[0]} observations.")
+    # generate the (empty) result
+    result = np.tile(
+        np.concatenate(
+            [
+                np.full((3, 4), np.nan, dtype=pattern_observations.dtype),
+                np.array([0, 0, 0, 1]).reshape(1, 4)
+            ],
+            axis=0
+        ),
+        (pattern_observations.shape[0], 1, 1)
+    )
+    # form the matrix containing the linear systems
+    M = np.concatenate(
+        [
+            - pattern_observations[..., [1]] * pattern_world_coords[..., :2],
+            pattern_observations[..., [0]] * pattern_world_coords[..., :2],
+            pattern_observations[..., ::-1] * [-1, 1]
+        ],
+        axis=-1
+    )
+    # batch compute the solutions
+    Vh = np.linalg.svd(M)[2]
+    H = Vh.swapaxes(1 ,2)[..., -1]
+    residual = np.sum((M @ H[..., None]) ** 2, axis=(1, 2))
+    logger.debug(f"Computed initial solution with {residual=}")
+    result[:, :2, :3] = H.reshape(-1, 3, 2).swapaxes(1, 2)
+    # find the scaled r_13 by solving the 4th degree polynomial
+    A1 = np.sum(H[..., :2] ** 2, axis=-1) - np.sum(H[..., 2:4] ** 2, axis=-1)
+    A2 = (H[..., None, :2] @ H[..., 2:4, None]).squeeze((-1, -2))
+    A3 = A2 ** 2
+    for i in range(pattern_observations.shape[0]):
+        roots = np.roots(
+            [
+                1, 0, A1[i], 0, -A3[i]
+            ]
+        )
+        real_roots = np.real(roots[np.isclose(np.imag(roots), 0)])
+        if real_roots.shape[0] == 0:
+            logger.debug(f"No real roots found for observation {i+1}.") 
+            continue
+        positive_roots = real_roots[real_roots > 0]
+        if positive_roots.shape[0] == 0:
+            logger.debug(f"No positive roots found for observation {i+1}.")
+            continue
+        if positive_roots.shape[0] > 1:
+            logger.debug(f"Several positive real roots were found for observations {i+1}.")
+            logger.debug(f"{roots=}")
+        result[i, 2, 0] = positive_roots[0]
+    result[:, :2, 3] = H[:, -2:]
+    result[:, 2, 1] = - A2 / result[:, 2, 0]
+    result[:, :3, :] /= np.linalg.norm(result[:, :3, [0]], axis=1)[:, None, :]
+    result[:, :3, 2] = np.cross(result[:, :3, 0], result[:, :3, 1])
+    return result
+
+def linear_intrinsics_and_z_translation(pattern_observations: np.ndarray,
+                                        pattern_world_coords: np.ndarray,
+                                        extrinsics: np.ndarray) -> np.ndarray:
+    """
+    TODO 
+    """
+    assert check_pattern_observations_shape(pattern_observations)
+    assert check_pattern_world_coords_shape(pattern_world_coords)
+    assert check_extrinsics_shape(extrinsics)
+    logger.debug("Computing linear intrinsics and z-translation...")
+    # compute rho, the radial distance
+    rho = np.linalg.norm(pattern_observations, axis=-1)
+    # setup A, B, C & D - Terms in the linear system of equations
+    A = np.sum(
+        pattern_world_coords[:, :2] * extrinsics[:, None, :2, 1],
+        axis=-1
+    ) + extrinsics[:, 1, [-1]]
+    B = pattern_observations[..., 1] * np.sum(
+        pattern_world_coords[:, :2] * extrinsics[:, None, :2, 2],
+        axis=-1
+    )
+    C = np.sum(
+        pattern_world_coords[:, :2] * extrinsics[:, None, :2, 0],
+        axis=-1
+    ) + extrinsics[:, 0, [-1]]
+    D = pattern_observations[..., 0] * np.sum(
+        pattern_world_coords[:, [0]]  * extrinsics[:, None, :2, 2],
+        axis=-1
+    )
+    # put the linear system in matrix form M * H = b
+    poly_rho = np.stack(
+        [
+            np.ones_like(rho), rho ** 2,
+            rho ** 3, rho ** 4
+        ],
+        axis=-1
+    )
+    M = np.concatenate(
+        [
+            np.stack(
+                [
+                    A[..., None] * poly_rho,
+                    C[..., None] * poly_rho
+                ],
+                axis=-1
+            ).swapaxes(-1, -2).reshape(-1, 4),
+            np.stack(
+                [
+                    np.stack(
+                        [np.diag(-a[:, 1]) for a in pattern_observations.swapaxes(0, 1)],
+                        axis=0
+                    ),
+                    np.stack(
+                        [np.diag(-a[:, 0]) for a in pattern_observations.swapaxes(0, 1)],
+                        axis=0
+                    ),
+                ],
+                axis=-1
+            ).swapaxes(-1, -2).reshape(-1, pattern_observations.shape[0]),
+        ],
+        axis=-1
+    )
+    b = np.stack(
+        [
+            B, D
+        ],
+        axis=-1
+    ).flatten()
+    H = np.linalg.lstsq(M, b)[0]
+    intrinsics = np.array([
+        H[0], 0, *H[1:4]
+    ])[::-1]
+    extrinsics[:, 2, -1] = H[4:]
+    logger.debug("Finished computing linear intrinsics and z-translation.")
+    return intrinsics
+
+# def linear_refinement():
+#     pass
+
+# def nonlinear_refinement():
+#     pass
+
+# def optimise_centre():
+#     pass
+
+# def calibrate():
+#     extrinsics = partial_extrinsics()
+#     intrinsics = linear_intrinsics_and_z_translation(extrinsics)
+#     linear_refinement(intrinsics, extrinsics)
+#     nonlinear_refinement(intrinsics, extrinsics)
+
+if __name__ == '__main__':
+    from fisheye.corners import find_corners_opencv
+    from glob import glob
+    import cv2
+    paths = glob('../fisheye-imgs/*.tif')
+    corners = []
+    show = False
+    for path in paths:
+        img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        c = find_corners_opencv(img, 9, 6)
+        if c is not None:
+            corners.append(c)
+        if show:
+            cv2.namedWindow('Corners')
+            cv2.moveWindow('Corners', 30, 30)
+            disp = img.copy()
+            disp = cv2.drawChessboardCorners(disp, (6, 9), c, c is not None)
+            disp = cv2.resize(disp, (1280, 720))
+            cv2.imshow('Corners', disp)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+    corners = np.stack(corners, axis=0).squeeze()
+    corners -= np.array([img.shape[1], img.shape[0]], dtype=np.float64) / 2
+    pattern_world_coords = generate_pattern_world_coords(
+        9, 6, 0.034
+    )
+    extr = partial_extrinsics(
+        corners, pattern_world_coords
+    )
+    print(extr)
+    intrinsics = linear_intrinsics_and_z_translation(
+        corners, pattern_world_coords, extr
+    )
+    print("intrinsics")
+    print(intrinsics)
+    print("extrinsics")
+    print(extr)
+    
