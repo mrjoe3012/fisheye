@@ -21,13 +21,14 @@ def find_corners_opencv(grayscale_img: np.ndarray, pattern_rows: int,
     :param pattern_cols: The number of columns in the calibration
     pattern.
     :returns: The detected corners or None if the pattern
-    could not be found.
+    could not be found. (rows*cols, 1, 2)
     """
     logger.debug("Finding corners (opencv)")
     assert len(grayscale_img.shape) == 2
+    pattern_size = (pattern_cols, pattern_rows)
     found, corners = cv2.findChessboardCorners(
         grayscale_img,
-        (pattern_rows, pattern_cols),
+        pattern_size,
         flags=(cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_FAST_CHECK
                + cv2.CALIB_CB_NORMALIZE_IMAGE)
     )
