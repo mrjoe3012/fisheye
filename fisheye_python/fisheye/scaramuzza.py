@@ -177,9 +177,9 @@ def linear_intrinsics_and_z_translation(pattern_observations: np.ndarray,
         axis=-1
     ) + extrinsics[:, 0, [-1]]
     D = pattern_observations[..., 0] * np.sum(
-        pattern_world_coords[:, [0]]  * extrinsics[:, None, :2, 2],
+        pattern_world_coords[:, :2]  * extrinsics[:, None, :2, 2],
         axis=-1
-    )
+    ) # potential mistake in paper, paper says to multiple by pattern_world_coords[:, [0]], but probs should be :2
     # put the linear system in matrix form M * H = b
     poly_rho = np.stack(
         [
