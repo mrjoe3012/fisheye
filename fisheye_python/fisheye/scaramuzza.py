@@ -6,6 +6,9 @@ import logging
 import numpy as np
 
 logger = logging.getLogger(__name__)
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter('%(levelname)s:%(name)s:%(message)s'))
+logger.addHandler(handler)
 
 def check_pattern_observations_shape(pattern_observations: np.ndarray) -> bool:
     """
@@ -34,6 +37,14 @@ def check_extrinsics_shape(extrinsics: np.ndarray) -> bool:
     :returns: True if the shape is correct.
     """
     return len(extrinsics.shape) == 3 and extrinsics.shape[1:] == (4, 4)
+
+def check_intrinsics_shape(intrinsics: np.ndarray) -> bool:
+    """
+    :param intrinics: The array of polynomial coefficients
+    in descending order of power.
+    :returns: True if the shape is exactly (5,)
+    """
+    return intrinsics.shape == (5,)
 
 def generate_pattern_world_coords(pattern_rows: int, pattern_cols: int,
                                   pattern_square_size: float) -> np.ndarray:
@@ -209,7 +220,7 @@ def linear_intrinsics_and_z_translation(pattern_observations: np.ndarray,
                     ),
                 ],
                 axis=-1
-            ).swapaxes(-1, -2).reshape(-1, pattern_observations.shape[0]),
+            ).transpose(1, 0, 3, 2).reshape(-1, pattern_observations.shape[0]),
         ],
         axis=-1
     )
@@ -227,8 +238,152 @@ def linear_intrinsics_and_z_translation(pattern_observations: np.ndarray,
     logger.debug("Finished computing linear intrinsics and z-translation.")
     return intrinsics
 
-# def linear_refinement():
-#     pass
+def linear_refinement_extrinsics(pattern_observations: np.ndarray,
+                      pattern_world_coords: np.ndarray, extrinsics: np.ndarray,
+                      intrinsics: np.ndarray) -> np.ndarray:
+    """
+    Solves all linear equations simultanesouly
+    using the estimated intrinsic parameters to
+    refine the extrinsic parameters.
+    :param pattern_observations: The pattern coordinates in image
+    space centred around the initial centre of distortion (middle
+    of the image). Size should be (N, M, 2) where N is the number
+    of observations of the pattern and M is the total number of
+    corners in the calibration pattern stored in row-major order.
+    :param extrinsics: The (N, 4, 4) extrinsics transformation matrix
+    computed by partial_extrinsics() which has all z-translation
+    componens set to np.nan. This will be modified in-place such
+    that z-components are set to the linear estimate.
+    :param intrinsics: An array of 5 polynomial coefficients in descending
+    order of power. The second-to-lowest power is always 0.
+    :returns: The refined extrinsics with the same shape as the input
+    extrinsics.
+    """
+    logger.debug("Performing a linear refinement of the extrinsic parameters.")
+    assert check_extrinsics_shape(extrinsics)
+    assert check_pattern_observations_shape(pattern_observations)
+    assert check_pattern_world_coords_shape(pattern_world_coords)
+    assert check_intrinsics_shape(intrinsics)
+    # create the empty result array
+    result = np.zeros_like(extrinsics)
+    result[:, -1, -1] = 1
+    # compute the radial distance for the observations
+    rho = np.linalg.norm(pattern_observations, axis=-1)
+    # evaluate the model
+    f_rho = np.polyval(intrinsics, rho)[..., None]
+    # set up the system of linear homogenous equations M * H = 0
+    # where H = [r_11, r_12, r_21, r_22, t_1, t_2, t_3]^T
+    M = np.concatenate(
+        [
+            pattern_world_coords[..., :2] * (f_rho - pattern_observations[..., [1]]),
+            pattern_world_coords[..., :2] * (-f_rho + pattern_observations[..., [1]]),
+            pattern_world_coords[..., :2] * (-pattern_observations[..., [0]] + pattern_observations[..., [1]]),
+            f_rho - pattern_observations[..., [1]],
+            -f_rho + pattern_observations[..., [1]],
+            -pattern_observations[..., [0]] + pattern_observations[..., [1]]
+        ],
+        axis=-1
+    )
+    # TODO: below is a target for refactor => residual = solve_and_scale(M, extrinsics)
+    Vh = np.linalg.svd(M)[-1]
+    H = Vh[:, -1, :]
+    # for numerical stability
+    residual = np.sum((M @ H[..., None]) ** 2, axis=(1, 2))
+    logger.debug(f"Computed solution for extrinsics refinement with {residual=}")
+    # ignore the solution for r_31 and r_32 and recompute it using
+    # the cross product for stability
+    result[..., :2, :2] = H[:, :4].reshape(-1, 2, 2).swapaxes(-1, -2)
+    result[..., :3, -1] = H[:, -3:]
+    # find the value of r_13 such that r_1 and r_2 are orthogonal
+    # and of the same magnitude
+    A1 = np.sum(H[..., :2] ** 2, axis=-1) - np.sum(H[..., 2:4] ** 2, axis=-1)
+    A2 = (H[..., None, :2] @ H[..., 2:4, None]).squeeze((-1, -2))
+    A3 = A2 ** 2
+    for i in range(pattern_observations.shape[0]):
+        roots = np.roots(
+            [
+                1, 0, A1[i], 0, -A3[i]
+            ]
+        )
+        real_roots = np.real(roots[np.isclose(np.imag(roots), 0)])
+        if real_roots.shape[0] == 0:
+            logger.debug(f"No real roots found for observation {i+1}.") 
+            continue
+        positive_roots = real_roots[real_roots > 0]
+        if positive_roots.shape[0] == 0:
+            logger.debug(f"No positive roots found for observation {i+1}.")
+            continue
+        if positive_roots.shape[0] > 1:
+            logger.debug(f"Several positive real roots were found for observations {i+1}.")
+            logger.debug(f"{roots=}")
+        result[i, 2, 0] = np.max(positive_roots)
+    result[:, 2, 1] = - A2 / result[:, 2, 0]
+    result[:, :3, :-1] /= np.linalg.norm(result[:, :3, [0]], axis=1)[:, None, :]
+    result[:, :3, 2] = np.cross(result[:, :3, 0], result[:, :3, 1])
+    return result
+
+def linear_refinement_intrinsics(pattern_observations: np.ndarray,
+                                 pattern_world_coords: np.ndarray,
+                                 extrinsics: np.ndarray, intrinsics: np.ndarray) -> np.ndarray:
+    """
+    Uses the refined extrinsics from linear_refinement_extrinsics
+    to solve a linear system of equations and thus improve the
+    current estimate for the intrinsic parameters.
+    :param pattern_observations: The pattern coordinates in image
+    space centred around the initial centre of distortion (middle
+    of the image). Size should be (N, M, 2) where N is the number
+    of observations of the pattern and M is the total number of
+    corners in the calibration pattern stored in row-major order.
+    :param extrinsics: The (N, 4, 4) extrinsics transformation matrix
+    computed by partial_extrinsics() which has all z-translation
+    componens set to np.nan. This will be modified in-place such
+    that z-components are set to the linear estimate.
+    :param intrinsics: An array of 5 polynomial coefficients in descending
+    order of power. The second-to-lowest power is always 0.
+    :returns: The refined intrinsics with the same shape as the input
+    intrinsics.
+    """
+    logger.debug("Performing linear refinement of intrinsics parameters...")
+    assert check_pattern_observations_shape(pattern_observations)
+    assert check_pattern_world_coords_shape(pattern_world_coords)
+    assert check_extrinsics_shape(extrinsics)
+    assert check_intrinsics_shape(intrinsics)
+    # create the empty result array
+    result = np.zeros_like(intrinsics)
+    # compute rho, the radial distance
+    rho = np.linalg.norm(
+        pattern_observations,
+        axis=-1,
+    )
+    # variable names for the constants used in the matrix
+    X = pattern_world_coords[..., 0]
+    Y = pattern_world_coords[..., 1]
+    u = pattern_observations[..., 0]
+    v = pattern_observations[..., 1]
+    r_11, r_12 = extrinsics[..., :2, [0]].swapaxes(0, 1)
+    r_21, r_22 = extrinsics[..., :2, [1]].swapaxes(0, 1)
+    r_31, r_32 = extrinsics[..., :2, [2]].swapaxes(0, 1)
+    t_1, t_2, t_3 = extrinsics[..., :3, [3]].swapaxes(0, 1)
+    A1 = X * (r_11 - r_21)
+    A2 = Y * (r_12 - r_22)
+    A3 = t_1 - t_2
+    A4 = A1 + A2 + A3
+    # setup the linear system of equations Ax = B
+    A = np.stack(
+        [
+            A4,
+            rho ** 2 * A4,
+            rho ** 3 * A4,
+            rho ** 4 * A4
+        ],
+        axis=-1
+    ).reshape(-1, 4)
+    B = (X * r_31 * (-u + v) + Y * r_32 * (-u + v) + t_3 * (-u + v)).flatten()
+    x, residual = np.linalg.lstsq(A, -B)[:2]
+    logger.debug(f"Computed solution with {residual=}")
+    result[[4, 2, 1, 0]] = x
+    logger.debug(f"Computed linear refinement of intrinsic parameters: {result=}")
+    return result
 
 # def nonlinear_refinement():
 #     pass
