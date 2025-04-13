@@ -231,6 +231,11 @@ def linear_intrinsics_and_z_translation(pattern_observations: np.ndarray,
         axis=-1
     ).flatten()
     H = np.linalg.lstsq(M, b)[0]
+    residual = np.sum(
+        (M @ H[..., None]) ** 2,
+        axis=(-1, -2)
+    )
+    logger.debug(f"Computed a solution for linear intrinsics and z-translation with {residual=}")
     intrinsics = np.array([
         H[0], 0, *H[1:4]
     ])[::-1]
@@ -269,21 +274,44 @@ def linear_refinement_extrinsics(pattern_observations: np.ndarray,
     result[:, -1, -1] = 1
     # compute the radial distance for the observations
     rho = np.linalg.norm(pattern_observations, axis=-1)
+    # store the shape of first two dims (n_obs, n_corners)
+    base_shape = rho.shape
     # evaluate the model
     f_rho = np.polyval(intrinsics, rho)[..., None]
     # set up the system of linear homogenous equations M * H = 0
-    # where H = [r_11, r_12, r_21, r_22, t_1, t_2, t_3]^T
-    M = np.concatenate(
+    # where H = [r_11, r_12, r_21, r_22, r_31, r_32 t_1, t_2, t_3]^T
+    M = np.stack(
         [
-            pattern_world_coords[..., :2] * (f_rho - pattern_observations[..., [1]]),
-            pattern_world_coords[..., :2] * (-f_rho + pattern_observations[..., [1]]),
-            pattern_world_coords[..., :2] * (-pattern_observations[..., [0]] + pattern_observations[..., [1]]),
-            f_rho - pattern_observations[..., [1]],
-            -f_rho + pattern_observations[..., [1]],
-            -pattern_observations[..., [0]] + pattern_observations[..., [1]]
+            np.concatenate(
+                [
+                    np.zeros((*base_shape, 2)),
+                    -pattern_world_coords[..., :2] * f_rho,
+                    pattern_world_coords[..., :2] * pattern_observations[..., [1]],
+                    np.zeros((*base_shape, 1)), - f_rho,
+                    pattern_observations[..., [1]]
+                ],
+                axis=-1
+            ),
+            np.concatenate(
+                [
+                    pattern_world_coords[..., :2] * f_rho, np.zeros((*base_shape, 2)),
+                    -pattern_world_coords[..., :2] * pattern_observations[..., [0]],
+                    f_rho, np.zeros((*base_shape, 1)), -pattern_observations[..., [0]]
+                ],
+                axis=-1
+            ),
+            np.concatenate(
+                [
+                    - pattern_observations[..., [1]] * pattern_world_coords[..., :2],
+                    pattern_observations[..., [0]] * pattern_world_coords[..., :2],
+                    np.zeros((*base_shape, 2)),
+                    pattern_observations[..., ::-1] * [-1, 1], np.zeros((*base_shape, 1))
+                ],
+                axis=-1
+            ),
         ],
         axis=-1
-    )
+    ).swapaxes(-1, -2).reshape(len(pattern_observations), -1, 9)
     # TODO: below is a target for refactor => residual = solve_and_scale(M, extrinsics)
     Vh = np.linalg.svd(M)[-1]
     H = Vh[:, -1, :]
@@ -356,31 +384,54 @@ def linear_refinement_intrinsics(pattern_observations: np.ndarray,
         axis=-1,
     )
     # variable names for the constants used in the matrix
-    X = pattern_world_coords[..., 0]
-    Y = pattern_world_coords[..., 1]
-    u = pattern_observations[..., 0]
-    v = pattern_observations[..., 1]
-    r_11, r_12 = extrinsics[..., :2, [0]].swapaxes(0, 1)
-    r_21, r_22 = extrinsics[..., :2, [1]].swapaxes(0, 1)
-    r_31, r_32 = extrinsics[..., :2, [2]].swapaxes(0, 1)
-    t_1, t_2, t_3 = extrinsics[..., :3, [3]].swapaxes(0, 1)
-    A1 = X * (r_11 - r_21)
-    A2 = Y * (r_12 - r_22)
-    A3 = t_1 - t_2
-    A4 = A1 + A2 + A3
-    # setup the linear system of equations Ax = B
-    A = np.stack(
+    A = np.sum(
+        pattern_world_coords[:, :2] * extrinsics[:, None, :2, 1],
+        axis=-1
+    ) + extrinsics[:, 1, [-1]]
+    B = pattern_observations[..., 1] * (np.sum(
+        pattern_world_coords[:, :2] * extrinsics[:, None, :2, 2],
+        axis=-1
+    ) + extrinsics[:, 2, [-1]])
+    C = np.sum(
+        pattern_world_coords[:, :2] * extrinsics[:, None, :2, 0],
+        axis=-1
+    ) + extrinsics[:, 0, [-1]]
+    D = pattern_observations[..., 0] * (np.sum(
+        pattern_world_coords[:, :2]  * extrinsics[:, None, :2, 2],
+        axis=-1
+    ) + extrinsics[:, 2, [-1]])
+    # setup the linear system of equations Tx = Y
+    T = np.stack(
         [
-            A4,
-            rho ** 2 * A4,
-            rho ** 3 * A4,
-            rho ** 4 * A4
+            np.stack(
+                [
+                    A, rho**2 * A,
+                    rho ** 3 * A, rho ** 4 * A
+                ],
+                axis=-1
+            ),
+            np.stack(
+                [
+                    C, rho**2 * C,
+                    rho ** 3 * C, rho ** 4 * C
+                ],
+                axis=-1
+            )
+        ],
+        axis=-2
+    ).reshape(-1, 4)
+    Y = np.stack(
+        [
+            B, D
         ],
         axis=-1
-    ).reshape(-1, 4)
-    B = (X * r_31 * (-u + v) + Y * r_32 * (-u + v) + t_3 * (-u + v)).flatten()
-    x, residual = np.linalg.lstsq(A, -B)[:2]
-    logger.debug(f"Computed solution with {residual=}")
+    ).flatten()
+    x = np.linalg.lstsq(T, Y)[0]
+    residual = np.sum(
+        (T @ x[..., None]) ** 2,
+        axis=(-1, -2)
+    )
+    logger.debug(f"Computed solution for intrinsic refinement with {residual=}")
     result[[4, 2, 1, 0]] = x
     logger.debug(f"Computed linear refinement of intrinsic parameters: {result=}")
     return result
